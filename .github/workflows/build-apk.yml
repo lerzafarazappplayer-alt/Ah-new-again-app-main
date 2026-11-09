@@ -2,7 +2,8 @@ name: Build Lerza Player Android APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "**" ]
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -14,28 +15,66 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # 1. Java 17 سیٹ اپ (بغیر کیشے ایرر کے)
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
-      - name: Grant Execute Permission to Gradlew
+      # 2. گٹ ہب پر موجود زپ فائل کو خود بخود کھولنا
+      - name: Unpack ZIP Archive
         run: |
-          if [ -d "android" ]; then cd android; fi
-          chmod +x gradlew || true
+          shopt -s nullglob
+          zip_files=(*.zip)
+          if [ ${#zip_files[@]} -gt 0 ]; then
+            for z in "${zip_files[@]}"; do
+              echo "Unpacking: $z"
+              unzip -o -q "$z"
+            done
+          else
+            find . -maxdepth 2 -name "*.zip" -exec unzip -o -q {} \;
+          fi
 
+      # 3. اینڈرائیڈ پروجیکٹ اور پرمیشنز تلاش کرنا
+      - name: Locate Android Project & Grant Execute Permissions
+        run: |
+          if [ -f "./gradlew" ]; then
+            echo "PROJECT_DIR=." >> $GITHUB_ENV
+            chmod +x ./gradlew
+          elif [ -f "./android/gradlew" ]; then
+            echo "PROJECT_DIR=./android" >> $GITHUB_ENV
+            chmod +x ./android/gradlew
+          else
+            GRADLEW_FILE=$(find . -name "gradlew" -type f | head -n 1)
+            if [ -n "$GRADLEW_FILE" ]; then
+              PROJECT_PATH=$(dirname "$GRADLEW_FILE")
+              chmod +x "$GRADLEW_FILE"
+              echo "PROJECT_DIR=$PROJECT_PATH" >> $GITHUB_ENV
+            else
+              echo "PROJECT_DIR=." >> $GITHUB_ENV
+            fi
+          fi
+
+      # 4. APK بلڈ کرنا
       - name: Build Debug APK with Gradle
         run: |
-          if [ -d "android" ]; then cd android; fi
-          ./gradlew assembleDebug --stacktrace --no-daemon
+          cd "$PROJECT_DIR"
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --stacktrace --no-daemon
+          else
+            gradle assembleDebug --stacktrace --no-daemon
+          fi
 
-      - name: Upload Debug APK
+      # 5. APK فائل ڈاؤن لوڈ کے لیے فراہم کرنا
+      - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Lerza-Player-v1.0-APK
+          name: Lerza-Player-v1.0.5-APK
           path: |
-            **/app/build/outputs/apk/debug/*.apk
-            android/app/build/outputs/apk/debug/*.apk
+            **/build/outputs/apk/debug/*.apk
+            **/build/outputs/apk/*/*.apk
+            **/*.apk
+          if-no-files-found: error
           retention-days: 30
